@@ -51,13 +51,6 @@
   .stage{flex:1 1 auto;position:relative;min-height:0;}
   #scene{position:absolute;top:0;left:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;}
   #scene:active{cursor:grabbing;}
-  /* soft contact shadow under the cube */
-  .stage::after{
-    content:"";position:absolute;left:50%;bottom:7%;
-    width:46%;height:42px;transform:translateX(-50%);
-    background:radial-gradient(ellipse at center, rgba(28,33,41,.20), rgba(28,33,41,0) 70%);
-    filter:blur(2px);pointer-events:none;z-index:0;
-  }
   #scene{z-index:1;}
 
   .toast{
@@ -305,12 +298,12 @@
 
     // ---------- palette (recognizable, lightly refined) ----------
     const COLORS = {
-      R:'#e0413f', // +X
-      O:'#f0822e', // -X
-      U:'#eef0f2', // +Y (white/up)
-      D:'#f3c613', // -Y (yellow)
-      F:'#23a05a', // +Z (green)
-      B:'#2f6dc4'  // -Z (blue)
+      R:'#d8322e', // +X
+      O:'#ee7415', // -X
+      U:'#f1f3f4', // +Y (white/up)
+      D:'#f6c400', // -Y (yellow)
+      F:'#179a4c', // +Z (green)
+      B:'#1f63c0'  // -Z (blue)
     };
 
     // ---------- renderer / scene / camera ----------
@@ -318,6 +311,10 @@
     const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
     renderer.setClearColor(0x000000, 0);
     renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.98;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
 
     const scene = new THREE.Scene();
@@ -325,48 +322,127 @@
     camera.position.set(4.4, 4.0, 6.2);
     camera.lookAt(0,0,0);
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xc7ccd6, 0.95));
-    const key = new THREE.DirectionalLight(0xffffff, 0.55);
-    key.position.set(5, 8, 6); scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.25);
-    fill.position.set(-6, -3, -4); scene.add(fill);
+    // soft studio environment for plastic-like reflections
+    function makeEnv(){
+      const c = document.createElement('canvas'); c.width = 32; c.height = 128;
+      const x = c.getContext('2d');
+      const g = x.createLinearGradient(0,0,0,128);
+      g.addColorStop(0.0, '#c6cdd8');
+      g.addColorStop(0.45,'#aab2bf');
+      g.addColorStop(0.7, '#8f97a4');
+      g.addColorStop(1.0, '#6b7280');
+      x.fillStyle = g; x.fillRect(0,0,32,128);
+      const tex = new THREE.CanvasTexture(c);
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const rt = pmrem.fromEquirectangular(tex);
+      tex.dispose(); pmrem.dispose();
+      return rt.texture;
+    }
+    scene.environment = makeEnv();
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xbcc4d0, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 1.25);
+    key.position.set(4, 9, 5);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.radius = 4;
+    key.shadow.bias = -0.0006;
+    const sc = key.shadow.camera;
+    sc.near = 1; sc.far = 30; sc.left = -5; sc.right = 5; sc.top = 5; sc.bottom = -5;
+    sc.updateProjectionMatrix();
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.32);
+    fill.position.set(-6, -2, -4); scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.4);
+    rim.position.set(-3, 4, -7); scene.add(rim);
+
+    // soft contact shadow on an invisible ground
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 40),
+      new THREE.ShadowMaterial({opacity: 0.22})
+    );
+    ground.rotation.x = -Math.PI/2;
+    ground.position.y = -2.05;
+    ground.receiveShadow = true;
+    scene.add(ground);
 
     const cubeGroup = new THREE.Group();
     scene.add(cubeGroup);
 
-    // ---------- sticker textures (rounded, slight gloss) ----------
+    // ---------- sticker textures (rounded glossy tiles) ----------
     const texCache = {};
+    function roundRect(x, p, w, r){
+      x.beginPath();
+      x.moveTo(p+r, p);
+      x.arcTo(p+w, p, p+w, p+w, r);
+      x.arcTo(p+w, p+w, p, p+w, r);
+      x.arcTo(p, p+w, p, p, r);
+      x.arcTo(p, p, p+w, p, r);
+      x.closePath();
+    }
     function stickerTexture(hex){
       if(texCache[hex]) return texCache[hex];
-      const s = 132, c = document.createElement('canvas');
+      const s = 160, c = document.createElement('canvas');
       c.width = c.height = s;
       const x = c.getContext('2d');
-      const r = 26, p = 9, w = s - p*2;
-      x.beginPath();
-      x.moveTo(p+r,p);
-      x.arcTo(p+w,p, p+w,p+w, r);
-      x.arcTo(p+w,p+w, p,p+w, r);
-      x.arcTo(p,p+w, p,p, r);
-      x.arcTo(p,p, p+w,p, r);
-      x.closePath();
+      const r = 30, p = 11, w = s - p*2;
+      // base tile
+      roundRect(x, p, w, r);
       x.fillStyle = hex; x.fill();
-      // gentle plastic highlight
-      const g = x.createLinearGradient(p,p,p,p+w);
-      g.addColorStop(0,'rgba(255,255,255,.20)');
-      g.addColorStop(.5,'rgba(255,255,255,0)');
-      g.addColorStop(1,'rgba(0,0,0,.07)');
-      x.fillStyle = g; x.fill();
+      // soft top-down sheen (subtle, keeps color saturated)
+      const g = x.createLinearGradient(p, p, p, p+w);
+      g.addColorStop(0,   'rgba(255,255,255,.08)');
+      g.addColorStop(.4,  'rgba(255,255,255,.01)');
+      g.addColorStop(.62, 'rgba(0,0,0,.00)');
+      g.addColorStop(1,   'rgba(0,0,0,.13)');
+      roundRect(x, p, w, r); x.fillStyle = g; x.fill();
+      // faint glossy corner highlight (top-left)
+      const rg = x.createRadialGradient(p+w*0.32, p+w*0.26, 4, p+w*0.32, p+w*0.26, w*0.7);
+      rg.addColorStop(0, 'rgba(255,255,255,.09)');
+      rg.addColorStop(.4,'rgba(255,255,255,.02)');
+      rg.addColorStop(1, 'rgba(255,255,255,0)');
+      roundRect(x, p, w, r); x.fillStyle = rg; x.fill();
+      // thin inner bevel: light top edge
+      x.lineWidth = 3;
+      roundRect(x, p+2, w-4, r-2);
+      x.strokeStyle = 'rgba(255,255,255,.06)'; x.stroke();
       const t = new THREE.CanvasTexture(c);
-      t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
+      t.encoding = THREE.sRGBEncoding; t.anisotropy = 8;
       texCache[hex] = t; return t;
     }
 
     // ---------- build the cube ----------
     const SP = 1.0;                 // logical spacing
-    const SIZE = 0.96;              // cubelet body
-    const bodyMat = new THREE.MeshStandardMaterial({color:0x16181d, roughness:0.62, metalness:0.05});
-    const bodyGeo = new THREE.BoxGeometry(SIZE,SIZE,SIZE);
-    const stickerGeo = new THREE.PlaneGeometry(0.84,0.84);
+    const SIZE = 0.98;              // cubelet body
+    const RAD = SIZE * 0.085;       // edge rounding
+
+    // compact rounded-box geometry (smooth chamfered edges)
+    function roundedBox(size, radius, seg){
+      const geo = new THREE.BoxGeometry(size, size, size, seg, seg, seg);
+      const pos = geo.attributes.position;
+      const half = size/2, inner = half - radius;
+      const v = new THREE.Vector3(), c = new THREE.Vector3();
+      for(let i=0;i<pos.count;i++){
+        v.fromBufferAttribute(pos, i);
+        c.set(
+          Math.max(-inner, Math.min(inner, v.x)),
+          Math.max(-inner, Math.min(inner, v.y)),
+          Math.max(-inner, Math.min(inner, v.z))
+        );
+        const d = v.clone().sub(c);
+        if(d.lengthSq() > 1e-9){ d.normalize().multiplyScalar(radius); v.copy(c).add(d); }
+        pos.setXYZ(i, v.x, v.y, v.z);
+      }
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color:0x101216, roughness:0.46, metalness:0.18, envMapIntensity:0.7
+    });
+    const bodyGeo = roundedBox(SIZE, RAD, 6);
+    const stickerGeo = new THREE.PlaneGeometry(0.80, 0.80);
 
     const cubelets = [];
     const stickerMeshes = [];
@@ -380,7 +456,6 @@
       {n:new THREE.Vector3(0,0, 1), col:COLORS.F},
       {n:new THREE.Vector3(0,0,-1), col:COLORS.B},
     ];
-    const _q = new THREE.Quaternion();
     const ZP = new THREE.Vector3(0,0,1);
 
     for(let xi=-1; xi<=1; xi++)
@@ -389,6 +464,7 @@
       const g = new THREE.Group();
       g.position.set(xi*SP, yi*SP, zi*SP);
       const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.castShadow = true;
       body.raycast = function(){};   // not pickable; only stickers are
       g.add(body);
 
@@ -398,10 +474,13 @@
           (f.n.y>0 && yi=== 1) || (f.n.y<0 && yi===-1) ||
           (f.n.z>0 && zi=== 1) || (f.n.z<0 && zi===-1);
         if(!onFace) return;
-        const m = new THREE.Mesh(stickerGeo, new THREE.MeshStandardMaterial({
-          map:stickerTexture(f.col), transparent:true, roughness:0.45, metalness:0.0
+        const m = new THREE.Mesh(stickerGeo, new THREE.MeshPhysicalMaterial({
+          map:stickerTexture(f.col), transparent:true,
+          roughness:0.42, metalness:0.0,
+          clearcoat:0.4, clearcoatRoughness:0.35,
+          envMapIntensity:0.4
         }));
-        m.position.copy(f.n).multiplyScalar(SIZE/2 + 0.005);
+        m.position.copy(f.n).multiplyScalar(SIZE/2 + 0.006);
         m.quaternion.setFromUnitVectors(ZP, f.n);
         m.userData.localNormal = f.n.clone(); // original; transform by cubelet.quaternion for current
         m.userData.color = f.col;
